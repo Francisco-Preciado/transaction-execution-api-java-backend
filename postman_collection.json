@@ -1,0 +1,1635 @@
+{
+  "info": {
+    "name": "Transaction Execution API",
+    "description": "Tests for every endpoint of the Transaction Execution API.\n\nStart the stack first: `docker compose up --build`.\nThe provider mock (WireMock) answers based on `accountId`: `acc-no-funds`, `acc-blocked`,\n`acc-provider-error` and `acc-slow` simulate the failure cases; any other account is approved.\n\nRun the whole collection with the Collection Runner (or `newman run`) in order:\nlater requests reuse the `transactionId` and `idempotencyKey` saved by earlier ones.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "transactionId",
+      "value": ""
+    },
+    {
+      "key": "idempotencyKey",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"responds in JSON\", () => {",
+          "    const type = pm.response.headers.get(\"Content-Type\") || \"\";",
+          "    pm.expect(type).to.match(/json/);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness endpoints.",
+      "item": [
+        {
+          "name": "Service health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "health"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reports service status\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"status\", \"service\", \"version\", \"timestamp\");",
+                  "    pm.expect(body.status).to.be.a(\"string\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Actuator health (includes provider circuit breaker)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 or 503\", () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));",
+                  "pm.test(\"has an overall status\", () => pm.expect(pm.response.json().status).to.be.oneOf([\"UP\", \"DOWN\", \"OUT_OF_SERVICE\", \"UNKNOWN\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Actuator info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/info",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "info"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenAPI spec",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v3",
+                "api-docs"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"documents /transactions\", () => pm.expect(pm.response.json().paths).to.have.property(\"/transactions\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute transaction - outcomes",
+      "description": "POST /transactions. Every case here records a transaction (201); its `status` tells the outcome.",
+      "item": [
+        {
+          "name": "CREDIT approved -> EXECUTED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 1500,\n  \"currency\": \"MXN\",\n  \"description\": \"Transferencia recibida\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));",
+                  "",
+                  "pm.test(\"approved by the provider\", () => {",
+                  "    pm.expect(tx.providerTransactionId).to.be.a(\"string\").and.not.empty;",
+                  "    pm.expect(tx.balanceAfter).to.be.a(\"number\");",
+                  "    pm.expect(tx.failureCode).to.be.null;",
+                  "});",
+                  "",
+                  "pm.test(\"echoes the request\", () => {",
+                  "    pm.expect(tx.accountId).to.eql(\"acc-123456\");",
+                  "    pm.expect(tx.type).to.eql(\"CREDIT\");",
+                  "    pm.expect(tx.amount).to.eql(1500);",
+                  "    pm.expect(tx.currency).to.eql(\"MXN\");",
+                  "    pm.expect(tx.description).to.eql(\"Transferencia recibida\");",
+                  "});",
+                  "pm.collectionVariables.set(\"transactionId\", tx.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DEBIT approved -> EXECUTED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 250.5,\n  \"currency\": \"MXN\",\n  \"description\": \"Pago de servicios\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));",
+                  "",
+                  "pm.test(\"approved by the provider\", () => {",
+                  "    pm.expect(tx.providerTransactionId).to.be.a(\"string\").and.not.empty;",
+                  "    pm.expect(tx.balanceAfter).to.be.a(\"number\");",
+                  "    pm.expect(tx.failureCode).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Insufficient funds (provider 422) -> REJECTED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-no-funds\",\n  \"type\": \"DEBIT\",\n  \"amount\": 500,\n  \"currency\": \"MXN\",\n  \"description\": \"Pago de servicios\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is REJECTED\", () => pm.expect(tx.status).to.eql(\"REJECTED\"));",
+                  "",
+                  "pm.test(\"failureCode is INSUFFICIENT_FUNDS\", () => {",
+                  "    pm.expect(tx.failureCode).to.eql(\"INSUFFICIENT_FUNDS\");",
+                  "    pm.expect(tx.failureMessage).to.be.a(\"string\");",
+                  "    pm.expect(tx.providerTransactionId).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Account blocked (provider 403) -> REJECTED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-blocked\",\n  \"type\": \"DEBIT\",\n  \"amount\": 100,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is REJECTED\", () => pm.expect(tx.status).to.eql(\"REJECTED\"));",
+                  "",
+                  "pm.test(\"failureCode is ACCOUNT_BLOCKED\", () => {",
+                  "    pm.expect(tx.failureCode).to.eql(\"ACCOUNT_BLOCKED\");",
+                  "    pm.expect(tx.failureMessage).to.be.a(\"string\");",
+                  "    pm.expect(tx.providerTransactionId).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider error (500, retried) -> FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-provider-error\",\n  \"type\": \"CREDIT\",\n  \"amount\": 100,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is FAILED\", () => pm.expect(tx.status).to.eql(\"FAILED\"));",
+                  "",
+                  "pm.test(\"failureCode is PROVIDER_UNAVAILABLE\", () => {",
+                  "    pm.expect(tx.failureCode).to.eql(\"PROVIDER_UNAVAILABLE\");",
+                  "    pm.expect(tx.failureMessage).to.be.a(\"string\");",
+                  "    pm.expect(tx.providerTransactionId).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider timeout (retried, ~10s) -> FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "The mock answers after 5s, past the 3s read timeout. Takes about 10 seconds.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-slow\",\n  \"type\": \"CREDIT\",\n  \"amount\": 100,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is FAILED\", () => pm.expect(tx.status).to.eql(\"FAILED\"));",
+                  "",
+                  "pm.test(\"failureCode is PROVIDER_UNAVAILABLE\", () => {",
+                  "    pm.expect(tx.failureCode).to.eql(\"PROVIDER_UNAVAILABLE\");",
+                  "    pm.expect(tx.failureMessage).to.be.a(\"string\");",
+                  "    pm.expect(tx.providerTransactionId).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute transaction - business rules",
+      "description": "Rule violations return 422, store nothing and never call the provider.",
+      "item": [
+        {
+          "name": "Amount 1.00 -> 422 AMOUNT_TOO_LOW",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 1,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"422 response\", () => pm.response.to.have.status(422));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code AMOUNT_TOO_LOW\", () => {",
+                  "    pm.expect(problem.status).to.eql(422);",
+                  "    pm.expect(problem.code).to.eql(\"AMOUNT_TOO_LOW\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Amount 1.01 -> accepted",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 1.01,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DEBIT 10000.01 -> 422 DEBIT_LIMIT_EXCEEDED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 10000.01,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"422 response\", () => pm.response.to.have.status(422));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code DEBIT_LIMIT_EXCEEDED\", () => {",
+                  "    pm.expect(problem.status).to.eql(422);",
+                  "    pm.expect(problem.code).to.eql(\"DEBIT_LIMIT_EXCEEDED\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DEBIT 10000.00 -> accepted",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 10000,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "CREDIT above debit limit -> accepted",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 50000,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Currency USD -> 422 UNSUPPORTED_CURRENCY",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 100,\n  \"currency\": \"USD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"422 response\", () => pm.response.to.have.status(422));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code UNSUPPORTED_CURRENCY\", () => {",
+                  "    pm.expect(problem.status).to.eql(422);",
+                  "    pm.expect(problem.code).to.eql(\"UNSUPPORTED_CURRENCY\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute transaction - invalid input",
+      "description": "Malformed requests return 400.",
+      "item": [
+        {
+          "name": "Missing fields and 3 decimals -> 400 VALIDATION_ERROR",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CREDIT\",\n  \"amount\": 10.555\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code VALIDATION_ERROR\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "",
+                  "pm.test(\"reports every invalid field\", () => {",
+                  "    const fields = problem.errors.map(e => e.field);",
+                  "    pm.expect(fields).to.include.members([\"accountId\", \"amount\", \"currency\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown type -> 400 MALFORMED_REQUEST",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"TRANSFER\",\n  \"amount\": 100,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code MALFORMED_REQUEST\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"MALFORMED_REQUEST\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed JSON -> 400 MALFORMED_REQUEST",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"accountId\": \"acc-123456\", \"type\": \"CREDIT\", ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code MALFORMED_REQUEST\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"MALFORMED_REQUEST\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid Idempotency-Key -> 400 VALIDATION_ERROR",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "has spaces"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Keys must be 1 to 64 printable ASCII characters without spaces.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"CREDIT\",\n  \"amount\": 100,\n  \"currency\": \"MXN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code VALIDATION_ERROR\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"VALIDATION_ERROR\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Execute transaction - idempotency",
+      "description": "Run in order. The first request generates a fresh key, so the folder can be re-run.",
+      "item": [
+        {
+          "name": "First request with key -> 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 250,\n  \"currency\": \"MXN\",\n  \"description\": \"Pago con reintento\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"Location header points to the transaction\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/transactions/\" + tx.id + \"$\"));",
+                  "});",
+                  "pm.test(\"status is EXECUTED\", () => pm.expect(tx.status).to.eql(\"EXECUTED\"));",
+                  "",
+                  "pm.test(\"not a replay\", () => pm.expect(pm.response.headers.has(\"Idempotent-Replayed\")).to.be.false);",
+                  "pm.collectionVariables.set(\"idempotentTransactionId\", tx.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key and body -> 200 replay",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 250,\n  \"currency\": \"MXN\",\n  \"description\": \"Pago con reintento\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent-Replayed: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));",
+                  "pm.test(\"returns the original transaction\", () => {",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"idempotentTransactionId\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key, different body -> 422 IDEMPOTENCY_KEY_REUSED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"acc-123456\",\n  \"type\": \"DEBIT\",\n  \"amount\": 300,\n  \"currency\": \"MXN\",\n  \"description\": \"Pago con reintento\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"422 response\", () => pm.response.to.have.status(422));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code IDEMPOTENCY_KEY_REUSED\", () => {",
+                  "    pm.expect(problem.status).to.eql(422);",
+                  "    pm.expect(problem.code).to.eql(\"IDEMPOTENCY_KEY_REUSED\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Get transaction by id",
+      "description": "GET /transactions/{id}.",
+      "item": [
+        {
+          "name": "Existing id -> 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Uses the id saved by \"CREDIT approved -> EXECUTED\"."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const tx = pm.response.json();",
+                  "pm.test(\"returns the requested transaction\", () => {",
+                  "    pm.expect(tx.id).to.eql(pm.collectionVariables.get(\"transactionId\"));",
+                  "    pm.expect(tx.status).to.eql(\"EXECUTED\");",
+                  "    pm.expect(tx).to.have.property(\"createdAt\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown id -> 404 TRANSACTION_NOT_FOUND",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 response\", () => pm.response.to.have.status(404));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code TRANSACTION_NOT_FOUND\", () => {",
+                  "    pm.expect(problem.status).to.eql(404);",
+                  "    pm.expect(problem.code).to.eql(\"TRANSACTION_NOT_FOUND\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Not a UUID -> 400 INVALID_PARAMETER",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions",
+                "not-a-uuid"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code INVALID_PARAMETER\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"INVALID_PARAMETER\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Search transactions",
+      "description": "GET /transactions. Newest first; `page` is 1-based, `limit` defaults to 20 (max 100).",
+      "item": [
+        {
+          "name": "All, default paging",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test(\"page response shape\", () => {",
+                  "    pm.expect(page).to.have.all.keys(\"items\", \"page\", \"limit\", \"totalItems\", \"totalPages\");",
+                  "    pm.expect(page.items).to.be.an(\"array\");",
+                  "});",
+                  "",
+                  "pm.test(\"defaults to page 1, limit 20\", () => {",
+                  "    pm.expect(page.page).to.eql(1);",
+                  "    pm.expect(page.limit).to.eql(20);",
+                  "    pm.expect(page.items.length).to.be.at.most(20);",
+                  "});",
+                  "pm.test(\"newest first\", () => {",
+                  "    const dates = page.items.map(t => Date.parse(t.createdAt));",
+                  "    for (let i = 1; i < dates.length; i++) pm.expect(dates[i - 1]).to.be.at.least(dates[i]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter by account, status and type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?accountId=acc-123456&status=EXECUTED&type=CREDIT&page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "accountId",
+                  "value": "acc-123456"
+                },
+                {
+                  "key": "status",
+                  "value": "EXECUTED"
+                },
+                {
+                  "key": "type",
+                  "value": "CREDIT"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test(\"page response shape\", () => {",
+                  "    pm.expect(page).to.have.all.keys(\"items\", \"page\", \"limit\", \"totalItems\", \"totalPages\");",
+                  "    pm.expect(page.items).to.be.an(\"array\");",
+                  "});",
+                  "",
+                  "pm.test(\"found at least one match\", () => pm.expect(page.totalItems).to.be.above(0));",
+                  "pm.test(\"every item matches the filters\", () => {",
+                  "    page.items.forEach(t => {",
+                  "        pm.expect(t.accountId).to.eql(\"acc-123456\");",
+                  "        pm.expect(t.status).to.eql(\"EXECUTED\");",
+                  "        pm.expect(t.type).to.eql(\"CREDIT\");",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter by status REJECTED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?status=REJECTED",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "REJECTED"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test(\"page response shape\", () => {",
+                  "    pm.expect(page).to.have.all.keys(\"items\", \"page\", \"limit\", \"totalItems\", \"totalPages\");",
+                  "    pm.expect(page.items).to.be.an(\"array\");",
+                  "});",
+                  "",
+                  "pm.test(\"every item is REJECTED\", () => page.items.forEach(t => pm.expect(t.status).to.eql(\"REJECTED\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pagination: page 2, limit 2",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?page=2&limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "2"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test(\"page response shape\", () => {",
+                  "    pm.expect(page).to.have.all.keys(\"items\", \"page\", \"limit\", \"totalItems\", \"totalPages\");",
+                  "    pm.expect(page.items).to.be.an(\"array\");",
+                  "});",
+                  "",
+                  "pm.test(\"honours page and limit\", () => {",
+                  "    pm.expect(page.page).to.eql(2);",
+                  "    pm.expect(page.limit).to.eql(2);",
+                  "    pm.expect(page.items.length).to.be.at.most(2);",
+                  "    pm.expect(page.totalPages).to.eql(Math.ceil(page.totalItems / 2));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No matches -> empty page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?accountId=acc-does-not-exist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "accountId",
+                  "value": "acc-does-not-exist"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const page = pm.response.json();",
+                  "pm.test(\"page response shape\", () => {",
+                  "    pm.expect(page).to.have.all.keys(\"items\", \"page\", \"limit\", \"totalItems\", \"totalPages\");",
+                  "    pm.expect(page.items).to.be.an(\"array\");",
+                  "});",
+                  "",
+                  "pm.test(\"empty\", () => {",
+                  "    pm.expect(page.items).to.be.empty;",
+                  "    pm.expect(page.totalItems).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "limit 101 -> 400 VALIDATION_ERROR",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?limit=101",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "101"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code VALIDATION_ERROR\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"VALIDATION_ERROR\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "page 0 -> 400 VALIDATION_ERROR",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?page=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code VALIDATION_ERROR\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"VALIDATION_ERROR\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown status -> 400 INVALID_PARAMETER",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?status=DONE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "DONE"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 response\", () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test(\"problem detail with code INVALID_PARAMETER\", () => {",
+                  "    pm.expect(problem.status).to.eql(400);",
+                  "    pm.expect(problem.code).to.eql(\"INVALID_PARAMETER\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
