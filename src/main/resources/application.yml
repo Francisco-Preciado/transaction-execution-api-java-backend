@@ -1,0 +1,80 @@
+spring:
+  application:
+    name: transaction-execution-api
+  mvc:
+    problemdetails:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/transactions}
+    username: ${DB_USERNAME:transactions}
+    password: ${DB_PASSWORD:transactions}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Schema is owned by Flyway migrations; Hibernate only checks it matches the entities.
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+server:
+  port: 8080
+
+transaction:
+  rules:
+    # Quoted: unquoted YAML numbers are floats, and 10000.00 would become BigDecimal "10000.0"
+    minimum-amount: "1.00"            # amount must be strictly greater
+    maximum-debit-amount: "10000.00"  # per DEBIT; CREDIT has no limit
+    supported-currencies: MXN
+
+provider:
+  base-url: ${PROVIDER_BASE_URL:http://localhost:8089}
+  connect-timeout: ${PROVIDER_CONNECT_TIMEOUT:2s}
+  read-timeout: ${PROVIDER_READ_TIMEOUT:3s}
+
+resilience4j:
+  retry:
+    instances:
+      provider:
+        # 1 call + 2 retries, waiting 200ms then 400ms. Only "no definitive answer" is retried;
+        # a provider rejection (4xx) is a normal result and is never retried.
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - com.transactionexecution.api.domain.exception.ProviderException
+  circuitbreaker:
+    instances:
+      provider:
+        # Opens when >= 50% of the last 50 calls failed (after at least 20 calls), then fails
+        # fast for 30s before letting 5 trial calls through.
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 50
+        minimum-number-of-calls: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.transactionexecution.api.domain.exception.ProviderException
+        register-health-indicator: true
+        # An open circuit is reported in /actuator/health but does not mark the app DOWN:
+        # restarting this service would not fix the provider.
+        allow-health-indicator-to-fail: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+app:
+  version: '@project.version@'

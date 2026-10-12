@@ -1,0 +1,19 @@
+{
+  "name": "Default: any account is approved",
+  "priority": 10,
+  "request": {
+    "method": "POST",
+    "url": "/provider/v1/execute"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "transactionId": "txn-{{randomValue length=12 type='ALPHANUMERIC' lowercase=true}}",
+      "status": "APPROVED",
+      "balance": 5500.00,
+      "executedAt": "{{now}}"
+    },
+    "transformers": ["response-template"]
+  }
+}

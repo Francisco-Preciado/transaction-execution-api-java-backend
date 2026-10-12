@@ -1,0 +1,20 @@
+{
+  "name": "acc-blocked: rejected with ACCOUNT_BLOCKED (403)",
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "url": "/provider/v1/execute",
+    "bodyPatterns": [
+      { "matchesJsonPath": { "expression": "$.accountId", "equalTo": "acc-blocked" } }
+    ]
+  },
+  "response": {
+    "status": 403,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "status": "REJECTED",
+      "code": "ACCOUNT_BLOCKED",
+      "message": "The account is blocked"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+# Full stack:            docker compose up --build
+# Dependencies only:     docker compose up postgres provider-mock   (then ./mvnw spring-boot:run)
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: transactions
+      POSTGRES_USER: transactions
+      POSTGRES_PASSWORD: transactions
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transactions -d transactions"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Mock of the external provider. Scenarios are selected by accountId (see wiremock/mappings).
+  provider-mock:
+    image: wiremock/wiremock:3.13.2
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./wiremock:/home/wiremock:ro
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/transactions
+      DB_USERNAME: transactions
+      DB_PASSWORD: transactions
+      PROVIDER_BASE_URL: http://provider-mock:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      provider-mock:
+        condition: service_started
+
+volumes:
+  postgres-data:

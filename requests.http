@@ -1,0 +1,155 @@
+### Sample requests (VS Code "REST Client" extension or IntelliJ HTTP Client).
+### Start the stack first: docker compose up --build
+@baseUrl = http://localhost:8080
+
+### 1. CREDIT approved -> 201, status EXECUTED, balanceAfter from the provider
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-123456",
+  "type": "CREDIT",
+  "amount": 1500.00,
+  "currency": "MXN",
+  "description": "Transferencia recibida"
+}
+
+### 2. DEBIT rejected by the provider (INSUFFICIENT_FUNDS) -> 201, status REJECTED
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-no-funds",
+  "type": "DEBIT",
+  "amount": 500.00,
+  "currency": "MXN",
+  "description": "Pago de servicios"
+}
+
+### 3. Account blocked (provider 403) -> 201, status REJECTED, failureCode ACCOUNT_BLOCKED
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-blocked",
+  "type": "DEBIT",
+  "amount": 100.00,
+  "currency": "MXN"
+}
+
+### 4. Provider error (500): retried 3 times -> 201, status FAILED
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-provider-error",
+  "type": "CREDIT",
+  "amount": 100.00,
+  "currency": "MXN"
+}
+
+### 5. Provider too slow (read timeout): retried 3 times -> 201, status FAILED (takes ~10s)
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-slow",
+  "type": "CREDIT",
+  "amount": 100.00,
+  "currency": "MXN"
+}
+
+### 6. Business rule: amount must be > 1.00 -> 422 AMOUNT_TOO_LOW (provider not called)
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-123456",
+  "type": "CREDIT",
+  "amount": 1.00,
+  "currency": "MXN"
+}
+
+### 7. Business rule: DEBIT max 10,000.00 -> 422 DEBIT_LIMIT_EXCEEDED
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-123456",
+  "type": "DEBIT",
+  "amount": 10000.01,
+  "currency": "MXN"
+}
+
+### 8. Business rule: only MXN -> 422 UNSUPPORTED_CURRENCY
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "accountId": "acc-123456",
+  "type": "CREDIT",
+  "amount": 100.00,
+  "currency": "USD"
+}
+
+### 9. Invalid input -> 400 VALIDATION_ERROR with every invalid field
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+
+{
+  "type": "CREDIT",
+  "amount": 10.555
+}
+
+### 10. Search: filters + pagination (page is 1-based, limit max 100)
+GET {{baseUrl}}/transactions?accountId=acc-123456&status=EXECUTED&type=CREDIT&page=1&limit=10
+
+### 11. Search: everything, newest first
+GET {{baseUrl}}/transactions
+
+### 12. Get by id (replace with an id from a previous response)
+GET {{baseUrl}}/transactions/00000000-0000-0000-0000-000000000000
+
+### 13. Health (includes the provider circuit breaker state)
+GET {{baseUrl}}/actuator/health
+
+### 14. Idempotency-Key, first time -> 201 (change the key to run it again from scratch)
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-0001
+
+{
+  "accountId": "acc-123456",
+  "type": "DEBIT",
+  "amount": 250.00,
+  "currency": "MXN",
+  "description": "Pago con reintento"
+}
+
+### 15. Same Idempotency-Key and body again -> 200, Idempotent-Replayed: true, same id, provider not called
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-0001
+
+{
+  "accountId": "acc-123456",
+  "type": "DEBIT",
+  "amount": 250.00,
+  "currency": "MXN",
+  "description": "Pago con reintento"
+}
+
+### 16. Same Idempotency-Key, different amount -> 422 IDEMPOTENCY_KEY_REUSED
+POST {{baseUrl}}/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-0001
+
+{
+  "accountId": "acc-123456",
+  "type": "DEBIT",
+  "amount": 300.00,
+  "currency": "MXN",
+  "description": "Pago con reintento"
+}
+
+### Swagger UI: http://localhost:8080/swagger-ui.html

@@ -1,0 +1,20 @@
+{
+  "name": "acc-provider-error: provider fails with 500 (retried, then FAILED)",
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "url": "/provider/v1/execute",
+    "bodyPatterns": [
+      { "matchesJsonPath": { "expression": "$.accountId", "equalTo": "acc-provider-error" } }
+    ]
+  },
+  "response": {
+    "status": 500,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "status": "REJECTED",
+      "code": "INTERNAL_ERROR",
+      "message": "Unexpected provider error"
+    }
+  }
+}
